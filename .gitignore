@@ -141,3 +141,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+data/*
+orig_voxels/*
+orig_renders/*

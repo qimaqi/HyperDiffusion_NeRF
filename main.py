@@ -23,13 +23,14 @@ import ldm.ldm.modules.diffusionmodules.openaimodel
 import wandb
 from transformer import Transformer
 
-sys.path.append("siren")
+# sys.path.append("siren")
+sys.path.append("nerf")
 
 
 @hydra.main(
     version_base=None,
     config_path="configs/diffusion_configs",
-    config_name="train_plane",
+    config_name="train_omniobject_apple",
 )
 def main(cfg: DictConfig):
     Config.config = config = cfg
@@ -68,6 +69,8 @@ def main(cfg: DictConfig):
             shape = state_dict[l].shape
             layers.append(np.prod(shape))
             layer_names.append(l)
+        print("#### layers #####", layers)
+        print("#### layer_names #####", layer_names)
         model = Transformer(
             layers, layer_names, **Config.config["transformer_config"]["params"]
         ).cuda()
@@ -77,66 +80,70 @@ def main(cfg: DictConfig):
             **Config.config["unet_config"]["params"]
         ).float()
 
+    
     dataset_path = os.path.join(Config.config["dataset_dir"], Config.config["dataset"])
     train_object_names = np.genfromtxt(
         os.path.join(dataset_path, "train_split.lst"), dtype="str"
     )
     if not cfg.mlp_config.params.move:
         train_object_names = set([str.split(".")[0] for str in train_object_names])
+    
     # Check if dataset folder already has train,test,val split; create otherwise.
     if method == "hyper_3d":
         mlps_folder_all = mlps_folder_train
         all_object_names = np.array(
             [obj for obj in os.listdir(dataset_path) if ".lst" not in obj]
         )
+        print("All object names", all_object_names)
+
         total_size = len(all_object_names)
         val_size = int(total_size * 0.05)
         test_size = int(total_size * 0.15)
         train_size = total_size - val_size - test_size
-        if not os.path.exists(os.path.join(dataset_path, "train_split.lst")):
-            train_idx = np.random.choice(
-                total_size, train_size + val_size, replace=False
-            )
-            test_idx = set(range(total_size)).difference(train_idx)
-            val_idx = set(np.random.choice(train_idx, val_size, replace=False))
-            train_idx = set(train_idx).difference(val_idx)
-            print(
-                "Generating new partition",
-                len(train_idx),
-                train_size,
-                len(val_idx),
-                val_size,
-                len(test_idx),
-                test_size,
-            )
+        # if not os.path.exists(os.path.join(dataset_path, "train_split.lst")):
+        #     train_idx = np.random.choice(
+        #         total_size, train_size + val_size, replace=False
+        #     )
+        #     test_idx = set(range(total_size)).difference(train_idx)
+        #     val_idx = set(np.random.choice(train_idx, val_size, replace=False))
+        #     train_idx = set(train_idx).difference(val_idx)
+        #     print(
+        #         "Generating new partition",
+        #         len(train_idx),
+        #         train_size,
+        #         len(val_idx),
+        #         val_size,
+        #         len(test_idx),
+        #         test_size,
+        #     )
 
-            # Sanity checking the train, val and test splits
-            assert len(train_idx.intersection(val_idx.intersection(test_idx))) == 0
-            assert len(train_idx.union(val_idx.union(test_idx))) == total_size
-            assert (
-                len(train_idx) == train_size
-                and len(val_idx) == val_size
-                and len(test_idx) == test_size
-            )
+        #     # Sanity checking the train, val and test splits
+        #     assert len(train_idx.intersection(val_idx.intersection(test_idx))) == 0
+        #     assert len(train_idx.union(val_idx.union(test_idx))) == total_size
+        #     assert (
+        #         len(train_idx) == train_size
+        #         and len(val_idx) == val_size
+        #         and len(test_idx) == test_size
+        #     )
 
-            np.savetxt(
-                os.path.join(dataset_path, "train_split.lst"),
-                all_object_names[list(train_idx)],
-                delimiter=" ",
-                fmt="%s",
-            )
-            np.savetxt(
-                os.path.join(dataset_path, "val_split.lst"),
-                all_object_names[list(val_idx)],
-                delimiter=" ",
-                fmt="%s",
-            )
-            np.savetxt(
-                os.path.join(dataset_path, "test_split.lst"),
-                all_object_names[list(test_idx)],
-                delimiter=" ",
-                fmt="%s",
-            )
+        #     np.savetxt(
+        #         os.path.join(dataset_path, "train_split.lst"),
+        #         all_object_names[list(train_idx)],
+        #         delimiter=" ",
+        #         fmt="%s",
+        #     )
+        #     np.savetxt(
+        #         os.path.join(dataset_path, "val_split.lst"),
+        #         all_object_names[list(val_idx)],
+        #         delimiter=" ",
+        #         fmt="%s",
+        #     )
+        #     np.savetxt(
+        #         os.path.join(dataset_path, "test_split.lst"),
+        #         all_object_names[list(test_idx)],
+        #         delimiter=" ",
+        #         fmt="%s",
+        #     )
 
         val_object_names = np.genfromtxt(
             os.path.join(dataset_path, "val_split.lst"), dtype="str"
@@ -147,6 +154,10 @@ def main(cfg: DictConfig):
         )
         test_object_names = set([str.split(".")[0] for str in test_object_names])
         # assert len(train_object_names) == train_size, f"{len(train_object_names)} {train_size}"
+
+        print("Train object names", train_object_names)
+        print("Val object names", val_object_names)
+        print("Test object names", test_object_names)
 
         train_dt = WeightDataset(
             mlps_folder_train,
@@ -216,6 +227,7 @@ def main(cfg: DictConfig):
     model_resume_path = Config.get("model_resume_path")
 
     # Initialize HyperDiffusion
+    print("input_data.shape", input_data.shape)
     diffuser = HyperDiffusion(
         model, train_dt, val_dt, test_dt, mlp_kwargs, input_data.shape, method, cfg
     )
@@ -234,13 +246,13 @@ def main(cfg: DictConfig):
         filename="best-val-nn-{epoch:02d}-{train_loss:.2f}-{val_fid:.2f}",
     )
 
-    best_mmd_checkpoint = ModelCheckpoint(
-        save_top_k=1,
-        monitor="val/lgan_mmd-CD",
-        mode="min",
-        dirpath=checkpoint_path,
-        filename="best-val-mmd-{epoch:02d}-{train_loss:.2f}-{val_fid:.2f}",
-    )
+    # best_mmd_checkpoint = ModelCheckpoint(
+    #     save_top_k=1,
+    #     monitor="val/lgan_mmd-CD",
+    #     mode="min",
+    #     dirpath=checkpoint_path,
+    #     filename="best-val-mmd-{epoch:02d}-{train_loss:.2f}-{val_fid:.2f}",
+    # )
 
     last_model_saver = ModelCheckpoint(
         dirpath=checkpoint_path,
@@ -258,7 +270,7 @@ def main(cfg: DictConfig):
         default_root_dir=checkpoint_path,
         callbacks=[
             best_acc_checkpoint,
-            best_mmd_checkpoint,
+            # best_mmd_checkpoint,
             last_model_saver,
             lr_monitor,
         ],

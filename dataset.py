@@ -152,6 +152,7 @@ class WeightDataset(Dataset):
         self.condition = cfg.transformer_config.params.condition
         files_list = list(os.listdir(mlps_folder))
         blacklist = {}
+
         if cfg.filter_bad:
             blacklist = set(np.genfromtxt(cfg.filter_bad_path, dtype=str))
         if object_names is None:
@@ -164,9 +165,15 @@ class WeightDataset(Dataset):
                     continue
                 # Check if file is in corresponding split (train, test, val)
                 # In fact, only train split is important here because we don't use test or val MLP weights
-                if ("_" in file and (file.split("_")[1] in object_names or (
-                        file.split("_")[1] + "_" + file.split("_")[2]) in object_names)) or (file in object_names):
-                    self.mlp_files.append(file)
+                try:
+                    if ("_" in file and (file.split("_")[1] in object_names or (
+                            file.split("_")[1] + "_" + file.split("_")[2]) in object_names)) or (file in object_names):
+                        self.mlp_files.append(file)
+                except:
+                    if file in object_names:
+                        mlp_file = os.path.join( file, 'checkpoints', '020000.ckpt')
+                        self.mlp_files.append(mlp_file)
+
         self.transform = None
         self.logger = wandb_logger
         self.model_dims = model_dims
@@ -180,6 +187,7 @@ class WeightDataset(Dataset):
             ).float()
         else:
             self.first_weights = torch.tensor([0])
+            print("First weights are None")
 
     def get_weights(self, state_dict):
         weights = []
@@ -223,7 +231,9 @@ class WeightDataset(Dataset):
             path2 = join(dir, "checkpoints", "model_current.pth")
             state_dict = torch.load(path1 if os.path.exists(path1) else path2)
         else:
-            state_dict = torch.load(dir, map_location=torch.device("cpu"))
+            state_dict = torch.load(dir, map_location=torch.device("cpu"), weights_only=True)
+            if "network_coarse_state_dict" in state_dict:
+                state_dict = state_dict["network_coarse_state_dict"]
 
         weights, weights_prev = self.get_weights(state_dict)
 
@@ -241,3 +251,6 @@ class WeightDataset(Dataset):
 
     def __len__(self):
         return len(self.mlp_files)
+
+
+

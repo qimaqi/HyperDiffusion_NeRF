@@ -18,7 +18,8 @@ from hd_utils import (Config, calculate_fid_3d, generate_mlp_from_weights,
 from siren import sdf_meshing
 from siren.dataio import anime_read
 from siren.experiment_scripts.test_sdf import SDFDecoder
-
+from nerf.test_voxel import NeRFDecoder , create_voxel, create_renders
+from PIL import Image
 
 class HyperDiffusion(pl.LightningModule):
     def __init__(
@@ -97,22 +98,35 @@ class HyperDiffusion(pl.LightningModule):
         if "hyper" in self.method and self.trainer.global_step == 0:
             curr_weights = Config.get("curr_weights")
             img = input_data[0].flatten()[:curr_weights]
-            print(img.shape)
+            # torch.Size([84548])
             mlp = generate_mlp_from_weights(img, self.mlp_kwargs)
-            sdf_decoder = SDFDecoder(
-                self.mlp_kwargs.model_type,
-                None,
-                "nerf" if self.mlp_kwargs.model_type == "nerf" else "mlp",
-                self.mlp_kwargs,
-            )
-            sdf_decoder.model = mlp.cuda()
-            if not self.mlp_kwargs.move:
-                sdf_meshing.create_mesh(
-                    sdf_decoder,
-                    "meshes/first_mesh",
-                    N=128,
-                    level=0.5 if self.mlp_kwargs.output_type == "occ" else 0,
+
+            if self.cfg.mlp_config.params.model_type == 'mlp_nerf':
+                self.use_nerf = True
+                nerf_decoder = NeRFDecoder(checkpoint_path=None)
+                nerf_decoder.model = mlp.cuda()
+
+            else:
+                self.use_nerf = False
+                sdf_decoder = SDFDecoder(
+                    self.mlp_kwargs.model_type,
+                    None,
+                    "nerf" if self.mlp_kwargs.model_type == "nerf" else "mlp",
+                    self.mlp_kwargs,
                 )
+
+                sdf_decoder.model = mlp.cuda()
+            if not self.mlp_kwargs.move:
+                if self.use_nerf:
+                    # create first bad voxel results
+                    create_voxel(nerf_decoder, "voxels/first_voxel", N=128)
+                else:
+                    sdf_meshing.create_mesh(
+                        sdf_decoder,
+                        "meshes/first_mesh",
+                        N=128,
+                        level=0.5 if self.mlp_kwargs.output_type == "occ" else 0,
+                    )
 
             print("Input images shape:", input_data.shape)
         elif self.method == "raw_3d" and self.trainer.global_step == 0:
@@ -175,11 +189,14 @@ class HyperDiffusion(pl.LightningModule):
         return loss
 
     def validation_step(self, val_batch, batch_idx):
-        metric_fn = (
-            self.calc_metrics_4d
-            if self.cfg.mlp_config.params.move
-            else self.calc_metrics
-        )
+        if not self.use_nerf:
+            metric_fn = (
+                self.calc_metrics_4d
+                if self.cfg.mlp_config.params.move
+                else self.calc_metrics
+            )
+        else:
+            metric_fn = self.calc_metrics_nerf
         metrics = metric_fn("train")
         for metric_name in metrics:
             self.log("train/" + metric_name, metrics[metric_name])
@@ -230,20 +247,34 @@ class HyperDiffusion(pl.LightningModule):
                             }
                         )
                 else:
-                    meshes, sdfs = self.generate_meshes(x_0s, None, res=512)
-                    for mesh in meshes:
-                        mesh.vertices *= 2
-                    print(
-                        "sdfs.stats",
-                        sdfs.min().item(),
-                        sdfs.max().item(),
-                        sdfs.mean().item(),
-                        sdfs.std().item(),
-                    )
-                    out_imgs = render_meshes(meshes)
-                    self.logger.log_image(
-                        "generated_renders", out_imgs, step=self.current_epoch
-                    )
+                    if self.use_nerf:
+                        rgb, density = self.generate_voxels(x_0s, None, res=128)
+                        # print("x_0s in train", x_0s.shape)
+                        render_image = self.generate_render_imgs(x_0s)  # ([4, 84548])
+                        render_image = render_image.cpu().numpy()
+                        render_image = [Image.fromarray((img * 255).astype(np.uint8)) for img in render_image]
+
+                        self.logger.log_image("generated_renders", render_image, step=self.current_epoch)
+
+                        # print("rgb", rgb.shape)
+                        # print("density", density.shape)
+                        # rgb torch.Size([2097152, 3])
+                        # density torch.Size([2097152, 1])
+                    else:
+                        meshes, sdfs = self.generate_meshes(x_0s, None, res=512)
+                        for mesh in meshes:
+                            mesh.vertices *= 2
+                            print(
+                                "sdfs.stats",
+                                sdfs.min().item(),
+                                sdfs.max().item(),
+                                sdfs.mean().item(),
+                                sdfs.std().item(),
+                            )
+                            out_imgs = render_meshes(meshes)
+                            self.logger.log_image(
+                                "generated_renders", out_imgs, step=self.current_epoch
+                            )
         # Handle Voxel baseline sample generation
         elif self.method == "raw_3d":
             if self.current_epoch % 5 == 0:
@@ -290,6 +321,52 @@ class HyperDiffusion(pl.LightningModule):
                     self.logger.log_image(
                         "generated_renders", imgs, step=self.current_epoch
                     )
+
+
+    def generate_render_imgs(self, x_0s, folder_name="renders"):
+        """
+        x_0s:
+        """
+        x_0s = x_0s.view(len(x_0s), -1)
+        curr_weights = Config.get("curr_weights")
+        x_0s = x_0s[:, :curr_weights]
+        # x_0s.shape torch.Size([4, 84548])
+        rgb_results = []
+        for i, weights in enumerate(x_0s):
+            mlp = generate_mlp_from_weights(weights, self.mlp_kwargs)
+            nerf_decoder = NeRFDecoder(checkpoint_path=None)
+            nerf_decoder.model = mlp.cuda().eval()
+            with torch.no_grad():
+                effective_file_name = None
+                result =  create_renders(nerf_decoder) 
+                rgb_result = result['rgb_coarse']
+            rgb_results.append(rgb_result)
+        rgb_results = torch.stack(rgb_results)
+        # print("rgb_results.shape", rgb_results.shape) # e([4, 160000, 3])
+        return rgb_results
+
+    def generate_voxels(self, x_0s, folder_name="voxels", res=64, info="0"):
+        """
+        x_0s:
+        """
+        x_0s = x_0s.view(len(x_0s), -1)
+        curr_weights = Config.get("curr_weights")
+        x_0s = x_0s[:, :curr_weights]
+        # x_0s.shape torch.Size([4, 84548])
+        print("x_0s.shape", x_0s.shape)   
+        for i, weights in enumerate(x_0s):
+            mlp = generate_mlp_from_weights(weights, self.mlp_kwargs)
+            nerf_decoder = NeRFDecoder(checkpoint_path=None)
+            nerf_decoder.model = mlp.cuda().eval()
+            with torch.no_grad():
+                effective_file_name = (
+                    f"{folder_name}/voxel_epoch_{self.current_epoch}_{i}_{info}"
+                    if folder_name is not None
+                    else None
+                )      
+                voxels = create_voxel(nerf_decoder, effective_file_name, N=res) 
+        return voxels
+
 
     def generate_meshes(self, x_0s, folder_name="meshes", info="0", res=64, level=0):
         x_0s = x_0s.view(len(x_0s), -1)
@@ -484,6 +561,80 @@ class HyperDiffusion(pl.LightningModule):
             self.logger,
         )
         return metrics
+
+    def calc_metrics_nerf(self, split_type):
+        # Misc
+        img2mse = lambda x, y: torch.mean((x - y) ** 2)
+        mse2psnr = lambda x: -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
+        to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
+
+        # dataset_path = os.path.join(
+        # instead of using some loss, let's just save model outputs
+        number_of_samples_to_generate = 100
+        test_batch_size = 50
+        sample_x_0s = []
+        orig_voxel_dir = f"orig_render/run_{wandb.run.name}"
+        os.makedirs(orig_voxel_dir, exist_ok=True)
+
+
+        for _ in tqdm(range(number_of_samples_to_generate // test_batch_size)):
+            sample_x_0s.append(
+                self.diff.ddim_sample_loop(
+                    self.model, (test_batch_size, *self.image_size[1:])
+                )
+            )
+
+        if number_of_samples_to_generate % test_batch_size != 0:
+            sample_x_0s.append(
+                self.diff.ddim_sample_loop(
+                    self.model,
+                    (
+                        number_of_samples_to_generate % test_batch_size,
+                        *self.image_size[1:],
+                    ),
+                )
+            )
+        sample_x_0s = torch.vstack(sample_x_0s)
+        torch.save(sample_x_0s, f"{orig_voxel_dir}/prev_sample_x_0s.pth")
+        print(sample_x_0s.shape)
+        print("Running RGB check")
+        sample_batch = []
+        from PIL import Image
+        gt_image = Image.open("/home/qi_ma/neuips_2024/HyperDiffusion_NeRF/ref_rgb.png")
+        gt_image_tensor = torch.tensor(np.array(gt_image)).float().cpu()
+        gt_image_tensor = gt_image_tensor / 255.0
+        # print("gt_image_tensor.shape", gt_image_tensor.min(), gt_image_tensor.max())
+        # print("gt_image_tensor.shape", gt_image_tensor.shape)
+
+        minimal_mse_loss = 1e6
+        for x_0s in tqdm(sample_x_0s):
+            # print("x_0s.shape in test", x_0s.shape)
+            x_0s = x_0s.unsqueeze(0)
+            rgb_result_i = self.generate_render_imgs(x_0s)
+            rgb_result_i = rgb_result_i.reshape(-1,400,400,3).cpu()
+            # print("rgb_result_i.shape", rgb_result_i.shape, rgb_result_i.min(), rgb_result_i.max())
+            # calculate mse loss
+            mse_loss = img2mse(rgb_result_i,gt_image_tensor)  #torch.nn.functional.mse_loss(rgb_result_i, gt_image_tensor)
+            if mse_loss < minimal_mse_loss:
+                best_x0 = x_0s
+                minimal_mse_loss = mse_loss
+                best_rgb_result = rgb_result_i
+                best_psnr = mse2psnr(mse_loss)  #10 * torch.log10(1 / mse_loss)
+                # save to image
+        best_rgb_result = best_rgb_result[0].numpy()
+        # best_rgb_result = best_rgb_result.clip(0, 1)
+        print("best_rgb_result", best_rgb_result.shape, "best_psnr", best_psnr)
+        image = Image.fromarray((best_rgb_result * 255).astype(np.uint8))
+        save_path = f"{orig_voxel_dir}/best_rgb_{self.current_epoch}.png"
+        image.save(save_path)
+        print("best image save_path", save_path)
+        # save x0s 
+        torch.save(best_x0.cpu(), f"{orig_voxel_dir}/best_x0s_epoch_{self.current_epoch}.pth")
+        
+
+        metrics = {'1-NN-CD-acc':best_psnr, "lgan_mmd-CD":0}
+        return metrics
+
 
     def calc_metrics(self, split_type):
         dataset_path = os.path.join(
@@ -704,6 +855,8 @@ class HyperDiffusion(pl.LightningModule):
                     "generated_renders", imgs, step=self.current_epoch
                 )
             return
+
+
         # If it's HyperDiffusion, let's calculate some statistics on training dataset
         elif self.method == "hyper_3d":
             x_0s = []

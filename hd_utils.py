@@ -5,7 +5,7 @@ import pyrender
 import torch
 import trimesh
 
-from mlp_models import MLP, MLP3D
+from mlp_models import MLP, MLP3D, MLPNeRF
 from Pointnet_Pointnet2_pytorch.log.classification.pointnet2_ssg_wo_normals import \
     pointnet2_cls_ssg
 from torchmetrics_fid import FrechetInceptionDistance
@@ -69,6 +69,8 @@ def get_mlp(mlp_kwargs):
     if "model_type" in mlp_kwargs:
         if mlp_kwargs.model_type == "mlp_3d":
             mlp = MLP3D(**mlp_kwargs)
+        if mlp_kwargs.model_type == "mlp_nerf":
+            mlp = MLPNeRF()
     else:
         mlp = MLP(**mlp_kwargs)
     return mlp
@@ -80,7 +82,7 @@ def generate_mlp_from_weights(weights, mlp_kwargs):
     weight_names = list(state_dict.keys())
     for layer in weight_names:
         val = state_dict[layer]
-        num_params = np.product(list(val.shape))
+        num_params = np.prod(list(val.shape))
         w = weights[:num_params]
         w = w.view(*val.shape)
         state_dict[layer] = w

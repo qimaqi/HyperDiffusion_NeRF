@@ -1,0 +1,43 @@
+name: hyper
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - pyg
+dependencies:
+  - python=3.11
+  - numpy
+  - pytorch
+  - pytorch-cuda=12.1
+  - pip 
+  - timm
+  - pip:
+    - easydict==1.11
+    - tqdm
+    - einops
+    - wandb
+    - scikit-image
+    - scikit-learn
+    - scikit-video
+    - matplotlib
+    - lpips
+    - hydra-core
+    - pandas
+    - networkx
+    - tensorboard
+    - kornia
+    - datasets
+    - opencv-python
+    - transformers
+    - tifffile
+    - torch-fidelity==0.3.0
+    - torchmetrics==0.9.3
+    - trimesh
+    - werkzeug
+    - pyopengl
+    - pyrender
+    - libigl
+    - plyfile
+    - pytorch-lightning==1.9.0
+
+

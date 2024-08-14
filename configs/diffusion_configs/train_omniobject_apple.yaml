@@ -1,0 +1,83 @@
+method: hyper_3d
+calculate_metric_on_test: False
+dedup: False
+test_sample_mult: 1.1
+filter_bad: False
+filter_bad_path: 
+disable_wandb: True
+dataset_dir: ./data
+dataset: apple
+tensorboard_log_dir: ./tensorboard_logs
+augment: False
+augment_amount: 0
+jitter_augment: False
+normalization_factor: 1
+timesteps: 500
+epochs: 2000
+scheduler: True
+scheduler_step: 50
+best_model_save_path:
+mode: train
+mlps_folder_train: /data/work-gcp-europe-west4-a/qimaqi/datasets/omni_weight_dataset_filter/output
+model_resume_path:
+sampling: ddim
+val_fid_calculation_period: 50
+lr: 0.0004
+batch_size: 32
+accumulate_grad_batches: 1
+val:
+  num_points: 2048
+  num_samples: 60
+mlp_config:
+  params:
+    model_type: mlp_nerf
+    use_leaky_relu: False
+    move: False
+diff_config:
+  params:
+    model_mean_type: START_X
+    model_var_type: FIXED_LARGE
+    loss_type: MSE
+transformer_config:
+  params:
+    n_embd: 2880
+    n_layer: 12
+    n_head: 16
+    split_policy: layer_by_layer
+    use_global_residual: False
+    condition: 'no'
+
+
+
+
+# _target_: src.dataloading.omni_dataset.OmniObjectPoseDataset
+# data_path: /scratch/qi_ma/ws_dataset/omni_weight_dataset_filter/
+# h5_path: [images_pose_4679.h5, images_pose_608.h5]
+# task: train
+# debug: false   
+# device: cuda:0
+# samples_num: 2
+# inside_eval_num: 4
+# outside_eval_ratio: 0.1
+# mean: [0.5, 0.5, 0.5] #[0.485, 0.456, 0.406] # for resnet, remember to change to [0.5, 0.5, 0.5] for vit
+# std: [0.5, 0.5, 0.5] #[0.229, 0.224, 0.225]
+# image_resize: [224, 224] # match the vit model
+# blender_path: /data/omniobject3d/raw/blender_renders
+# normalize_pose: [ 0, 0,  2.4]
+# normalize_image: true
+# params:
+#     _target_: src.model_zoo.semantic_nerf.NeRF_freeze_batch 
+#     image_size: [400,400]  # 800 800 for original, 400 400 for train nerf
+#     hfov: 0.8575560450553894
+#     depth_range: [2, 6]
+#     convention: opengl
+#     N_samples: 64
+#     i_embed: 0
+#     multires: 10
+#     multires_views: 4
+#     no_batching: true
+#     white_bkgd: true
+#     chunk: 65536 # 1024*64
+#     netchunk: 65536 # 1024*64
+#     skips: [] # find a bug
+#     ray_dir: 'up' # pooling

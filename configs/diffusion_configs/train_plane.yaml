@@ -18,7 +18,7 @@ scheduler: True
 scheduler_step: 200
 best_model_save_path:
 mode: train
-mlps_folder_train: ./mlp_weights/3d_128_plane_multires_4_manifoldplus_slower_no_clipgrad
+mlps_folder_train: /home/qi_ma/ws_dataset/hyperdiffusion/small_set
 model_resume_path:
 sampling: ddim
 val_fid_calculation_period: 15
